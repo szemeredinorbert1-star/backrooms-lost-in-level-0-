@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Backrooms: Lost in Level 0</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080806;color:#fff;font-family:Arial,sans-serif;touch-action:none}
+#game{display:block;width:100vw;height:100vh;background:#17150e}
+#hud{position:fixed;inset:0;pointer-events:none}
+#top{position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;gap:8px;font-size:13px;text-shadow:0 2px 4px #000}
+.pill{background:#0009;border:1px solid #ffffff30;border-radius:10px;padding:8px 10px}
+#message{position:absolute;top:48%;left:50%;transform:translate(-50%,-50%);font-size:18px;text-align:center;text-shadow:0 2px 6px #000;background:#0009;padding:12px 16px;border-radius:10px;max-width:85%;opacity:0;transition:opacity .2s}
+#cross{position:absolute;left:50%;top:50%;width:5px;height:5px;border-radius:50%;background:#ffffffaa;transform:translate(-50%,-50%)}
+#controls{position:fixed;inset:0;pointer-events:none}
+#stick{position:absolute;left:18px;bottom:24px;width:116px;height:116px;border-radius:50%;background:#ffffff18;border:2px solid #ffffff55;pointer-events:auto}
+#nub{position:absolute;left:35px;top:35px;width:42px;height:42px;border-radius:50%;background:#ffffff55;border:2px solid #ffffff99}
+#lookzone{position:absolute;right:0;bottom:0;width:58%;height:68%;pointer-events:auto}
+#buttons{position:absolute;right:16px;bottom:24px;display:flex;flex-direction:column;gap:10px;pointer-events:auto}
+button{border:1px solid #ffffff70;background:#111c;color:white;border-radius:14px;padding:12px 14px;font-weight:bold;font-size:13px;min-width:88px}
+button:active{background:#806c32}
+#start,#end{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#080806eF;padding:22px;text-align:center;z-index:5}
+.panel{max-width:440px;background:#19170f;border:1px solid #b4a35b66;border-radius:18px;padding:22px;box-shadow:0 12px 50px #000}
+h1{font-size:25px;color:#e5d58b;margin:0 0 10px}
+p{line-height:1.45;color:#ddd}
+#start button,#end button{margin-top:10px;background:#75632c;border:0;font-size:16px;padding:14px 24px}
+.small{font-size:12px;color:#aaa}
+@media (min-width:800px){#stick{width:130px;height:130px}#nub{left:40px;top:40px}#lookzone{width:55%}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="top"><div class="pill">LEVEL 0 · <span id="status">Keresd a kijáratot</span></div><div class="pill">Zseblámpa: <span id="lampstate">BE</span></div></div>
+  <div id="cross"></div><div id="message"></div>
+</div>
+<div id="controls">
+  <div id="stick"><div id="nub"></div></div>
+  <div id="lookzone"></div>
+  <div id="buttons"><button id="lamp">🔦 LÁMPA</button><button id="run">🏃 FUTÁS</button></div>
+</div>
+<div id="start"><div class="panel">
+  <h1>BACKROOMS</h1><p><b>Lost in Level 0</b></p>
+  <p>Találd meg a kijáratot a sárga folyosók között. Figyelj a hangokra, és kerüld el a lényeket!</p>
+  <p class="small">Bal joystick: mozgás · Jobb oldali húzás: körbenézés<br>FUTÁS: gyorsabb mozgás · LÁMPA: zseblámpa</p>
+  <button id="begin">JÁTÉK INDÍTÁSA</button>
+</div></div>
+<div id="end" style="display:none"><div class="panel"><h1 id="endtitle">VÉGE</h1><p id="endtext"></p><button id="again">ÚJRAJÁTSZÁS</button></div></div>
+<script>
+(() => {
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const statusEl=document.getElementById('status'),lampState=document.getElementById('lampstate'),message=document.getElementById('message');
+let W=innerWidth,H=innerHeight,dpr=Math.min(devicePixelRatio||1,1.5);
+function resize(){W=innerWidth;H=innerHeight;canvas.width=Math.floor(W*dpr);canvas.height=Math.floor(H*dpr);canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+
+const map=[
+"################",
+"#..............#",
+"#..##.....##...#",
+"#..#......#....#",
+"#..#..##..#....#",
+"#.....#.......##",
+"###...#.........",
+"#.....####......",
+"#...............",
+"#..####....##...#",
+"#...............#",
+"#....##.........#",
+"#...........#...#",
+"#..##.......#...#",
+"#..............E#",
+"################"
+];
+const MW=map[0].length,MH=map.length;
+let player,enemies,flashlight=true,running=false,playing=false,won=false,dead=false,last=0,keys={};
+const entityDefs=[
+ {name:'Smiler',x:12.5,y:2.5,type:'smiler',speed:.34},
+ {name:'Hound',x:3.5,y:11.5,type:'hound',speed:.48},
+ {name:'Skin-Stealer',x:12.5,y:12.5,type:'skin',speed:.29},
+ {name:'Partygoer',x:7.5,y:8.5,type:'party',speed:.25},
+ {name:'T',x:2.5,y:6.5,type:'t',speed:.30}
+];
+function reset(){
+ player={x:1.6,y:1.6,a:0.15};enemies=entityDefs.map(e=>({...e,homeX:e.x,homeY:e.y,alert:false}));
+ flashlight=true;running=false;won=false;dead=false;playing=true;
+ lampState.textContent='BE';statusEl.textContent='Keresd a kijáratot';document.getElementById('end').style.display='none';
+}
+function wall(x,y){let mx=Math.floor(x),my=Math.floor(y);return mx<0||my<0||mx>=MW||my>=MH||map[my][mx]==='#'}
+function cast(angle){
+ const step=.025,dx=Math.cos(angle)*step,dy=Math.sin(angle)*step;let x=player.x,y=player.y,d=0;
+ while(d<22){x+=dx;y+=dy;d+=step;if(wall(x,y))break}
+ return {d:d*Math.cos(angle-player.a),x,y};
+}
+function draw(){
+ ctx.fillStyle='#c8b76b';ctx.fillRect(0,0,W,H/2);
+ ctx.fillStyle='#554a27';ctx.fillRect(0,H/2,W,H/2);
+ // ceiling/floor atmospheric bands
+ for(let i=0;i<12;i++){let yy=H/2+i*i*1.5;ctx.fillStyle=`rgba(25,20,8,${.018+i*.003})`;ctx.fillRect(0,yy,W,2)}
+ const fov=Math.PI/2.9,cols=Math.max(180,Math.floor(W/3)),zbuf=new Array(cols);
+ for(let i=0;i<cols;i++){
+  let a=player.a-fov/2+(i/cols)*fov,r=cast(a),dist=Math.max(.1,r.d);zbuf[i]=dist;
+  let h=Math.min(H*1.8,H/(dist*.78)),shade=Math.max(22,190-dist*17);
+  if(!flashlight)shade*=.57;
+  let flicker=flashlight?(Math.random()>.996?.65:1):1;
+  let c=Math.floor(shade*flicker);
+  ctx.fillStyle=`rgb(${c},${Math.floor(c*.88)},${Math.floor(c*.48)})`;
+  ctx.fillRect(i*W/cols,(H-h)/2,W/cols+1,h);
+  if((Math.floor(r.x*2)+Math.floor(r.y*2))%4===0){ctx.fillStyle='rgba(70,52,18,.14)';ctx.fillRect(i*W/cols,(H-h)/2,W/cols+1,h)}
+  // subtle fluorescent light glow
+  if(dist<5&&Math.abs(Math.sin(a*3))<.035){ctx.fillStyle='rgba(255,245,170,.13)';ctx.fillRect(i*W/cols,(H-h)/2,W/cols+1,h)}
+ }
+ drawEntities(zbuf,cols,fov);
+ // vignette / flashlight cone
+ let g=ctx.createRadialGradient(W/2,H*.52,10,W/2,H*.52,Math.max(W,H)*.72);
+ g.addColorStop(0,flashlight?'rgba(0,0,0,0)':'rgba(0,0,0,.38)');g.addColorStop(1,'rgba(0,0,0,.76)');
+ ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ // static/noise
+ if(Math.random()<.12){ctx.fillStyle='#fff';ctx.globalAlpha=.035;ctx.fillRect(Math.random()*W,Math.random()*H,Math.random()*70+10,1);ctx.globalAlpha=1}
+}
+function drawEntities(zbuf,cols,fov){
+ const list=enemies.map(e=>{let dx=e.x-player.x,dy=e.y-player.y,dist=Math.hypot(dx,dy),ang=Math.atan2(dy,dx)-player.a;while(ang>Math.PI)ang-=Math.PI*2;while(ang<-Math.PI)ang+=Math.PI*2;return {...e,dist,ang}}).filter(e=>Math.abs(e.ang)<fov*.65&&e.dist<13).sort((a,b)=>b.dist-a.dist);
+ for(const e of list){
+  let sx=(.5+e.ang/fov)*W,scale=Math.min(1.7,H/(e.dist*2.5)),size=Math.max(10,Math.min(H*.62, H*.43/(e.dist*.48)));
+  let col=Math.floor((sx/W)*cols);if(zbuf[Math.max(0,Math.min(cols-1,col))]<e.dist-.2)continue;
+  let y=H*.53;
+  ctx.save();ctx.translate(sx,y);ctx.scale(scale,scale);
+  if(e.type==='smiler'){
+   ctx.fillStyle='#080807';ctx.beginPath();ctx.ellipse(0,-size*.08,size*.28,size*.38,0,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='#f7efb1';ctx.shadowColor='#fff3a0';ctx.shadowBlur=18;ctx.beginPath();ctx.ellipse(0,-size*.12,size*.21,size*.12,0,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='#19130b';ctx.beginPath();ctx.arc(0,-size*.12,size*.18,0,Math.PI);ctx.fill();
+  }else if(e.type==='hound'){
+   ctx.fillStyle='#17130e';ctx.beginPath();ctx.ellipse(0,0,size*.32,size*.22,0,0,Math.PI*2);ctx.fill();
+   ctx.beginPath();ctx.ellipse(size*.2,-size*.18,size*.17,size*.15,0,0,Math.PI*2);ctx.fill();
+   ctx.beginPath();ctx.moveTo(size*.1,-size*.27);ctx.lineTo(size*.06,-size*.52);ctx.lineTo(size*.23,-size*.3);ctx.fill();
+   ctx.fillStyle='#e7c34d';ctx.fillRect(size*.23,-size*.22,5,4);
+  }else if(e.type==='skin'){
+   ctx.fillStyle='#30271d';ctx.fillRect(-size*.18,-size*.32,size*.36,size*.62);
+   ctx.fillStyle='#897b5b';ctx.beginPath();ctx.arc(0,-size*.43,size*.17,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='#17120c';ctx.fillRect(-size*.13,-size*.46,size*.07,4);ctx.fillRect(size*.06,-size*.46,size*.07,4);
+  }else if(e.type==='party'){
+   ctx.fillStyle='#9b7621';ctx.fillRect(-size*.16,-size*.22,size*.32,size*.42);
+   ctx.fillStyle='#e3c84b';ctx.beginPath();ctx.arc(0,-size*.38,size*.2,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='#b82c20';ctx.beginPath();ctx.arc(-size*.07,-size*.39,3,0,Math.PI*2);ctx.arc(size*.07,-size*.39,3,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='#5c1710';ctx.fillRect(-size*.08,-size*.32,size*.16,3);
+  }else{
+   // T: a mysterious, dark T-shaped figure, intentionally simple for this first prototype
+   ctx.fillStyle='#090909';ctx.fillRect(-size*.3,-size*.5,size*.6,size*.15);
+   ctx.fillRect(-size*.09,-size*.36,size*.18,size*.72);
+   ctx.fillStyle='#d8d0a0';ctx.fillRect(-size*.19,-size*.46,size*.07,4);ctx.fillRect(size*.12,-size*.46,size*.07,4);
+  }
+  ctx.restore();
+  if(e.dist<5){ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';ctx.fillText(e.name,sx,H*.53+size*.42)}
+ }
+}
+function move(dt){
+ if(!playing)return;
+ let forward=0,side=0;
+ if(keys.w||keys.ArrowUp)forward++;if(keys.s||keys.ArrowDown)forward--;
+ if(keys.a||keys.ArrowLeft)side--;if(keys.d||keys.ArrowRight)side++;
+ forward+=joyY;side+=joyX;
+ let mag=Math.hypot(forward,side);if(mag>1){forward/=mag;side/=mag}
+ let speed=(running?2.65:1.55)*dt;
+ let nx=player.x+Math.cos(player.a)*forward*speed+Math.cos(player.a+Math.PI/2)*side*speed;
+ let ny=player.y+Math.sin(player.a)*forward*speed+Math.sin(player.a+Math.PI/2)*side*speed;
+ if(!wall(nx,player.y))player.x=nx;if(!wall(player.x,ny))player.y=ny;
+ for(const e of enemies){
+  let dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy);
+  if(d<7){e.alert=true;let s=e.speed*dt*(d<3?1.25:1);let ex=e.x+dx/d*s,ey=e.y+dy/d*s;if(!wall(ex,e.y))e.x=ex;if(!wall(e.x,ey))e.y=ey}
+  if(d<.48){finish(false,e.name);return}
+ }
+ if(Math.floor(player.x)===14&&Math.floor(player.y)===14){finish(true);return}
+}
+function finish(win,who){playing=false;won=win;document.getElementById('endtitle').textContent=win?'SIKERÜLT KIJUTNOD!':'ELKAPOTT: '+who.toUpperCase();document.getElementById('endtext').textContent=win?'Megtaláltad a kijáratot a Level 0-ból. Ez csak az első próba!':'A folyosók még nem engednek el. Próbáld újra!';document.getElementById('end').style.display='flex'}
+function loop(t){let dt=Math.min(.05,(t-last)/1000||0);last=t;if(playing){move(dt);draw()}else if(!dead){draw()}requestAnimationFrame(loop)}
+let joyX=0,joyY=0,stick=document.getElementById('stick'),nub=document.getElementById('nub'),stickId=null;
+function setJoy(e){let r=stick.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,dx=e.clientX-cx,dy=e.clientY-cy,max=38,len=Math.hypot(dx,dy);if(len>max){dx=dx/len*max;dy=dy/len*max}joyX=dx/max;joyY=-dy/max;nub.style.transform=`translate(${dx}px,${dy}px)`}
+stick.addEventListener('pointerdown',e=>{stickId=e.pointerId;stick.setPointerCapture(stickId);setJoy(e)});
+stick.addEventListener('pointermove',e=>{if(e.pointerId===stickId)setJoy(e)});
+function stopStick(){stickId=null;joyX=joyY=0;nub.style.transform=''}
+stick.addEventListener('pointerup',stopStick);stick.addEventListener('pointercancel',stopStick);
+let lookId=null,lastLookX=0;
+const look=document.getElementById('lookzone');
+look.addEventListener('pointerdown',e=>{lookId=e.pointerId;lastLookX=e.clientX;look.setPointerCapture(lookId)});
+look.addEventListener('pointermove',e=>{if(e.pointerId===lookId&&playing){let dx=e.clientX-lastLookX;player.a+=dx*.006;lastLookX=e.clientX}});
+look.addEventListener('pointerup',()=>lookId=null);look.addEventListener('pointercancel',()=>lookId=null);
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key==='Shift')running=true});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;if(e.key==='Shift')running=false});
+document.getElementById('run').addEventListener('pointerdown',()=>running=true);
+['pointerup','pointercancel','pointerleave'].forEach(ev=>document.getElementById('run').addEventListener(ev,()=>running=false));
+document.getElementById('lamp').onclick=()=>{flashlight=!flashlight;lampState.textContent=flashlight?'BE':'KI'};
+document.getElementById('begin').onclick=()=>{document.getElementById('start').style.display='none';reset();requestAnimationFrame(loop)};
+document.getElementById('again').onclick=()=>reset();
+reset();playing=false;draw();
+})();
+</script>
+</body>
+</html>
